@@ -197,9 +197,10 @@
     // Performance (Actual Output / Ideal Output) — mathematically identical to
     // CU below (both are actual-rate / plan-rate), kept as one field.
     var CU = (Qvs !== null && planRate) ? (Qvs / planRate) * 100 : null;
-    // OEE = Availability x Performance x Quality. This operation has no
-    // reject/defect concept (Quality = 100% always), so OEE = OA x CU / 100.
-    var OEE = (OA !== null && CU !== null) ? (OA * CU) / 100 : null;
+    // OEE = Working Utilization x Capacity Utilization / 100. This matches
+    // the source workbook's own OEE_Actual column (and the contractor's
+    // report) exactly, verified against real figures for 2026-06-01..07.
+    var OEE = (UO !== null && CU !== null) ? (UO * CU) / 100 : null;
 
     // detail/informational breakdown (not part of the main ST waterfall)
     var faceConvBD = d.faceM8 + d.faceM8A + d.faceM9 + d.faceM10;
@@ -269,8 +270,9 @@
     var planRate = planWeekly[weekNo] || 0;
     var CU = (UO !== null && planRate) ? avg(weekKpis.map(function (k) { return k.Qvs; })) / planRate * 100 : null;
     var OA = avg(weekKpis.map(function (k) { return k.OA; }));
-    // OEE = Availability x Performance x Quality(=100%) -> OA x CU / 100
-    var OEE = (OA !== null && CU !== null) ? OA * CU / 100 : null;
+    // OEE = Working Utilization x Capacity Utilization / 100 (matches the
+    // workbook's OEE_Actual column and the contractor's own report).
+    var OEE = (UO !== null && CU !== null) ? UO * CU / 100 : null;
     var MA = avg(weekKpis.map(function (k) { return k.MA; }));
     var UA = avg(weekKpis.map(function (k) { return k.UA; }));
     return { week: weekNo, PT: PT, OT: OT, production: Production, rate: Rate, UO: UO, UA: UA, CU: CU, OEE: OEE, OA: OA, MA: MA, planRate: planRate, days: weekKpis.length };
@@ -299,14 +301,15 @@
     var MAw = (sOT + sMT) !== 0 ? sOT / (sOT + sMT) * 100 : null;
     var REw = (sAT + sUD) !== 0 ? sAT / (sAT + sUD) * 100 : null;
     var CUw = (Rate !== null && plan.qplanRate) ? Rate / plan.qplanRate * 100 : null;
-    // OEE = Availability x Performance x Quality(=100%) -> OA x CU / 100
-    var OEEw = (OAw !== null && CUw !== null) ? OAw * CUw / 100 : null;
+    // OEE = Working Utilization x Capacity Utilization / 100 (matches the
+    // workbook's OEE_Actual column and the contractor's own report).
+    var OEEw = (UOw !== null && CUw !== null) ? UOw * CUw / 100 : null;
 
     var UOavg = avg(monthKpis.map(function (k) { return k.UO; }));
     var UAavg = avg(monthKpis.map(function (k) { return k.UA; }));
     var CUavg = (plan.qplanRate) ? avg(monthKpis.map(function (k) { return k.Qvs; })) / plan.qplanRate * 100 : null;
     var OAavg = avg(monthKpis.map(function (k) { return k.OA; }));
-    var OEEavg = (OAavg !== null && CUavg !== null) ? OAavg * CUavg / 100 : null;
+    var OEEavg = (UOavg !== null && CUavg !== null) ? UOavg * CUavg / 100 : null;
     var MAavg = avg(monthKpis.map(function (k) { return k.MA; }));
 
     // True MTBF/MTTR aggregated over the period: sum the actual breakdown
@@ -404,15 +407,23 @@
     });
   }
 
-  /** Generic period aggregator (like Period_Summary) over an arbitrary kpi subset. */
-  function computePeriodSummary(kpisSubset, planMonthly, assumptions) {
+  /**
+   * Generic period aggregator (like Period_Summary) over an arbitrary kpi
+   * subset. Mirrors the source workbook's own convention: %CU/%OEE for an
+   * ad-hoc/weekly-shaped range compare against the WEEKLY plan rate
+   * (Plan_Weekly), the same reference Weekly_Summary and Period_Summary use
+   * — not the monthly rate (that's what Monthly_Summary/summarizeMonth use).
+   * OEE = Working Utilization x Capacity Utilization / 100, matching the
+   * workbook's own OEE_Actual column and the contractor's own PPT report.
+   */
+  function computePeriodSummary(kpisSubset, planWeekly, assumptions) {
     var n = kpisSubset.length;
     var sPT = 0, sOT = 0, sST = 0, sAT = 0, sMT = 0, sUD = 0, sIT = 0, sDT = 0, production = 0, energy = 0;
-    var monthDayCount = {};
+    var weekDayCount = {};
     kpisSubset.forEach(function (k) {
       sPT += k.PT; sOT += k.OT; sST += k.ST; sAT += k.AT; sMT += k.MT; sUD += k.UD; sIT += k.IT; sDT += k.DT;
       production += k.S; energy += k.energy;
-      monthDayCount[k.month] = (monthDayCount[k.month] || 0) + 1;
+      weekDayCount[k.week] = (weekDayCount[k.week] || 0) + 1;
     });
     var rate = sPT !== 0 ? production / sPT : null;
     var UOw = sOT !== 0 ? sPT / sOT * 100 : null;
@@ -422,22 +433,22 @@
     var REw = (sAT + sUD) !== 0 ? sAT / (sAT + sUD) * 100 : null;
 
     var totalDays = 0, weightedRateSum = 0;
-    for (var m in monthDayCount) {
-      var plan = planMonthly[m];
-      var cnt = monthDayCount[m];
+    for (var w in weekDayCount) {
+      var cnt = weekDayCount[w];
       totalDays += cnt;
-      weightedRateSum += (plan ? plan.qplanRate : 0) * cnt;
+      weightedRateSum += (planWeekly[w] || 0) * cnt;
     }
     var blendedPlanRate = totalDays ? weightedRateSum / totalDays : 0;
     var CUw = (rate !== null && blendedPlanRate) ? rate / blendedPlanRate * 100 : null;
-    // OEE = Availability x Performance x Quality(=100%) -> OA x CU / 100
-    var OEEw = (OAw !== null && CUw !== null) ? OAw * CUw / 100 : null;
+    // OEE = Working Utilization x Capacity Utilization / 100 (matches the
+    // workbook's OEE_Actual column and the contractor's own report).
+    var OEEw = (UOw !== null && CUw !== null) ? UOw * CUw / 100 : null;
 
     var UOavg = avg(kpisSubset.map(function (k) { return k.UO; }));
     var UAavg = avg(kpisSubset.map(function (k) { return k.UA; }));
     var CUavg = blendedPlanRate ? avg(kpisSubset.map(function (k) { return k.Qvs; })) / blendedPlanRate * 100 : null;
     var OAavg = avg(kpisSubset.map(function (k) { return k.OA; }));
-    var OEEavg = (OAavg !== null && CUavg !== null) ? OAavg * CUavg / 100 : null;
+    var OEEavg = (UOavg !== null && CUavg !== null) ? UOavg * CUavg / 100 : null;
     var MAavg = avg(kpisSubset.map(function (k) { return k.MA; }));
     var REavg = avg(kpisSubset.map(function (k) { return k.RE; }));
 
@@ -472,8 +483,9 @@
     var RE = (sAT + sUD) !== 0 ? sAT / (sAT + sUD) * 100 : 0;
     var avgPlanRate = avg(planRates) || 0;
     var CU = avgPlanRate ? rate / avgPlanRate * 100 : 0;
-    // OEE = Availability x Performance x Quality(=100%) -> OA x CU / 100
-    var OEE = OA * CU / 100;
+    // OEE = Working Utilization x Capacity Utilization / 100 (matches the
+    // workbook's OEE_Actual column and the contractor's own report).
+    var OEE = UO * CU / 100;
     var achievementPct = planProdSum ? production / planProdSum * 100 : 0;
     var MTBF = sumBreakdownCount !== 0 ? sOT / sumBreakdownCount : null;
     var MTTR = sumBreakdownCount !== 0 ? sUD / sumBreakdownCount : null;
@@ -503,6 +515,8 @@
     computeAllDays: computeAllDays,
     computeMonthlySummary: computeMonthlySummary,
     computeWeeklySummary: computeWeeklySummary,
+    summarizeMonth: summarizeMonth,
+    summarizeWeek: summarizeWeek,
     computeYTD: computeYTD,
     groupBy: groupBy,
     avg: avg

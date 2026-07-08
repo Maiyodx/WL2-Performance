@@ -196,24 +196,32 @@
 
   function renderKPICards() {
     var subset = filteredKpis();
-    var ps = (state.rangePreset === "all" || state.rangePreset === "ytd")
-      ? ytdAsPeriodSummary()
-      : WL2.computePeriodSummary(subset, state.planMonthly, state.assumptions);
+    var isYTD = state.rangePreset === "all" || state.rangePreset === "ytd";
+    var ps = isYTD ? ytdAsPeriodSummary() : WL2.computePeriodSummary(subset, state.planWeekly, state.assumptions);
+    // YTD/All matches the workbook's own Yearly_Summary block, which is
+    // weighted-only. Any other range (custom, this month, last 30 days)
+    // matches the contractor's own daily-average report style instead —
+    // same distinction the workbook's own Period_Summary sheet documents
+    // as block "① weighted" vs block "② daily-average, matches the report".
+    var m = isYTD ? ps.w : ps.avgMethod;
     var target = state.assumptions.OEE_tgt;
     var wrap = $("#kpiCards");
     wrap.innerHTML = "";
+    $("#kpiMethodNote").textContent = isYTD
+      ? "คำนวณแบบถ่วงน้ำหนักตามชั่วโมงจริง — ตรงกับชีต Yearly_Summary"
+      : "คำนวณแบบเฉลี่ย %รายวัน — ตรงกับรายงานผู้รับเหมา/PPT (ชีต Period_Summary บล็อก②)";
 
     var usingTrueBD = subset.some(function (k) { return k.usingTrueBreakdownCount; });
     var mtbfSub = usingTrueBD ? "OT / จำนวนครั้ง Breakdown จริง" : "ยังไม่มีข้อมูลจำนวนครั้ง Breakdown (ใช้ค่าประมาณ)";
 
     var tiles = [
-      { label: "OEE (A×P, Quality=100%)", value: ps.w.OEE, isPct: true, sub: "เป้าหมาย " + target + "% • OA × Performance", status: statusForOEE(ps.w.OEE, target) },
-      { label: "Operating Availability (OA)", value: ps.w.OA, isPct: true, sub: "AT / ST", status: statusForThreshold(ps.w.OA, "OA") },
-      { label: "Mechanical Avail. (MA)", value: ps.w.MA, isPct: true, sub: "OT / (OT+MT)", status: statusForThreshold(ps.w.MA, "MA") },
-      { label: "Utilization Avail. (UA)", value: ps.w.UA, isPct: true, sub: "OT / (OT+IT)", status: statusForThreshold(ps.w.UA, "UA") },
-      { label: "Working Utilization (UO)", value: ps.w.UO, isPct: true, sub: "WT / (WT+DT)", status: statusForThreshold(ps.w.UO, "UO") },
-      { label: "Reliability (RE)", value: ps.w.RE, isPct: true, sub: "AT / (AT+Unplanned MT)", status: statusForThreshold(ps.w.RE, "RE") },
-      { label: "Performance (CU)", value: ps.w.CU, isPct: true, sub: "Actual Output / Ideal Output", status: statusForThreshold(ps.w.CU, "CU") },
+      { label: "OEE", value: m.OEE, isPct: true, sub: "เป้าหมาย " + target + "% • UO × Performance", status: statusForOEE(m.OEE, target) },
+      { label: "Operating Availability (OA)", value: m.OA, isPct: true, sub: "AT / ST", status: statusForThreshold(m.OA, "OA") },
+      { label: "Mechanical Avail. (MA)", value: m.MA, isPct: true, sub: "OT / (OT+MT)", status: statusForThreshold(m.MA, "MA") },
+      { label: "Utilization Avail. (UA)", value: m.UA, isPct: true, sub: "OT / (OT+IT)", status: statusForThreshold(m.UA, "UA") },
+      { label: "Working Utilization (UO)", value: m.UO, isPct: true, sub: "WT / (WT+DT)", status: statusForThreshold(m.UO, "UO") },
+      { label: "Reliability (RE)", value: m.RE, isPct: true, sub: "AT / (AT+Unplanned MT)", status: statusForThreshold(m.RE, "RE") },
+      { label: "Performance (CU)", value: m.CU, isPct: true, sub: "Actual Output / Ideal Output", status: statusForThreshold(m.CU, "CU") },
       { label: "MTBF", value: ps.MTBF, unit: "hr", isNum: true, sub: mtbfSub, status: "neutral" },
       { label: "MTTR", value: ps.MTTR, unit: "hr", isNum: true, sub: "Unplanned MT / จำนวนครั้ง Breakdown", status: "neutral" },
       { label: "Production", value: ps.production, unit: "BCM", isNum: true, sub: "Rate " + fmt(ps.rate) + " BCM/hr", status: "neutral" },
@@ -253,11 +261,28 @@
     var buckets = bucketByGranularity(subset, state.granularity);
     var xLabels = buckets.map(function (b) { return b.key; });
 
+    // Use the granularity-appropriate reference so each point matches its
+    // validated source: a single day already carries its own OEE (monthly
+    // plan rate, matches Calc_Daily); a week aggregate matches Weekly_Summary
+    // (weekly plan rate); a month aggregate matches Monthly_Summary (monthly
+    // plan rate).
     var oeeVals = [], prodVals = [];
     buckets.forEach(function (b) {
-      var ps = WL2.computePeriodSummary(b.items, state.planMonthly, state.assumptions);
-      oeeVals.push(ps.w.OEE);
-      prodVals.push(ps.production);
+      var oee, production;
+      if (state.granularity === "day") {
+        oee = b.items[0].OEE;
+        production = b.items[0].S;
+      } else if (state.granularity === "week") {
+        var ws = WL2.summarizeWeek(b.items, b.items[0].week, state.planWeekly);
+        oee = ws.OEE;
+        production = ws.production;
+      } else {
+        var ms = WL2.summarizeMonth(b.items, b.items[0].month, state.planMonthly, state.assumptions);
+        oee = ms.w.OEE;
+        production = ms.production;
+      }
+      oeeVals.push(oee);
+      prodVals.push(production);
     });
 
     var xFormat = function (label, i) {
