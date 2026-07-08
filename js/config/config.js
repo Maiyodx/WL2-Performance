@@ -53,11 +53,26 @@
       crDProd: 63, crDHrs: 64,
       crEProd: 65, crEHrs: 66,
       crFProd: 67, crFHrs: 68,
-      energy: 69
+      energy: 69,
+      // Added column (BS) beyond the original template — see README section
+      // "MTBF/MTTR" below. Not present in older copies of the workbook;
+      // parseDailyInput() treats a missing/blank value as 0 and engine.js
+      // falls back to the legacy MTBF proxy for those rows.
+      breakdownCount: 70
     },
     // header row is row 4 in Excel (0-based index 3); data starts row 5 (index 4)
     DATA_START_ROW: 4,
     DATA_END_ROW: 368, // row 369 in Excel
+
+    // ---- MTBF/MTTR ----
+    // True MTBF = Operating Time / Breakdown Frequency (actual event count),
+    // True MTTR = Unplanned Maintenance Time / Breakdown Frequency.
+    // Daily_Input needs a "Breakdown Count (Unplanned)" column (BS) — the
+    // number of distinct unplanned-breakdown EVENTS that day, not hours.
+    // A companion template with this column pre-added and styled is
+    // WL2_Performance_v7_with_breakdown_count.xlsx. Until a given row has
+    // this filled in, engine.js falls back to the old proxy
+    // (Operating Time / MTBF_req) so historical rows still show a number.
 
     // ---- display labels for the three production sources (S1/S2/S3 in the
     // workbook). Edit these if contractor names change. ----
@@ -123,6 +138,7 @@
     STATUS_THRESHOLDS: {
       OA: { good: 80, warning: 65 },
       UO: { good: 85, warning: 70 },
+      UA: { good: 85, warning: 70 },
       CU: { good: 90, warning: 75 },
       MA: { good: 85, warning: 70 },
       RE: { good: 90, warning: 75 }

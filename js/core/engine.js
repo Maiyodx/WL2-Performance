@@ -92,7 +92,8 @@
         crDProd: num(g(COL.crDProd)), crDHrs: num(g(COL.crDHrs)),
         crEProd: num(g(COL.crEProd)), crEHrs: num(g(COL.crEHrs)),
         crFProd: num(g(COL.crFProd)), crFHrs: num(g(COL.crFHrs)),
-        energy: num(g(COL.energy))
+        energy: num(g(COL.energy)),
+        breakdownCount: num(g(COL.breakdownCount))
       };
       // replicate the "has any data" gate used throughout the workbook
       var sumErc = 0;
@@ -178,17 +179,27 @@
     var S1 = d.prodConD, S2 = d.prodConF, S3 = d.prodOther;
     var S = S1 + S2 + S3;
     var Qvs = PT !== 0 ? S / PT : null;
-    var BF = assumptions.MTBF_req !== 0 ? OT / assumptions.MTBF_req : 0;
+    // Breakdown Frequency: use the real event count (d.breakdownCount) when the
+    // day has it filled in; otherwise fall back to the legacy proxy
+    // (Operating Time / MTBF_req) so rows from before this column existed
+    // still produce a number instead of a blank.
+    var usingTrueBreakdownCount = d.breakdownCount > 0;
+    var BF = usingTrueBreakdownCount ? d.breakdownCount : (assumptions.MTBF_req !== 0 ? OT / assumptions.MTBF_req : 0);
     var MTTR = (UD !== 0 && BF !== 0) ? UD / BF : null;
     var MTBF = (OT !== 0 && BF !== 0) ? OT / BF : null;
     var UO = OT !== 0 ? (PT / OT) * 100 : null;
     var OA = ST !== 0 ? (AT / ST) * 100 : null;
+    var UA = AT !== 0 ? (OT / AT) * 100 : null;
     var MA = (OT + MT) !== 0 ? (OT / (OT + MT)) * 100 : null;
     var RE = (AT + UD) !== 0 ? (AT / (AT + UD)) * 100 : null;
     var plan = planMonthly[d.month];
     var planRate = plan ? plan.qplanRate : 0;
+    // Performance (Actual Output / Ideal Output) — mathematically identical to
+    // CU below (both are actual-rate / plan-rate), kept as one field.
     var CU = (Qvs !== null && planRate) ? (Qvs / planRate) * 100 : null;
-    var OEE = (UO !== null && CU !== null) ? (UO * CU) / 100 : null;
+    // OEE = Availability x Performance x Quality. This operation has no
+    // reject/defect concept (Quality = 100% always), so OEE = OA x CU / 100.
+    var OEE = (OA !== null && CU !== null) ? (OA * CU) / 100 : null;
 
     // detail/informational breakdown (not part of the main ST waterfall)
     var faceConvBD = d.faceM8 + d.faceM8A + d.faceM9 + d.faceM10;
@@ -216,7 +227,8 @@
       CT: CT, HT: HT, ST: ST, PD: PD, UD: UD, MT: MT, UT: UT, PR: PR, PA: PA,
       AT: AT, IT: IT, OT: OT, DT: DT, PT: PT,
       S: S, S1: S1, S2: S2, S3: S3, Qvs: Qvs, BF: BF, MTTR: MTTR, MTBF: MTBF,
-      UO: UO, OA: OA, MA: MA, RE: RE, CU: CU, OEE: OEE, energy: d.energy,
+      UO: UO, OA: OA, UA: UA, MA: MA, RE: RE, CU: CU, OEE: OEE, energy: d.energy,
+      usingTrueBreakdownCount: usingTrueBreakdownCount,
       faceConvBD: faceConvBD, crusherBD: crusherBD,
       fleetProd: fleetProd, crusherStats: crusherStats,
       raw: d
@@ -256,10 +268,12 @@
     var UO = avg(weekKpis.map(function (k) { return k.UO; }));
     var planRate = planWeekly[weekNo] || 0;
     var CU = (UO !== null && planRate) ? avg(weekKpis.map(function (k) { return k.Qvs; })) / planRate * 100 : null;
-    var OEE = (UO !== null && CU !== null) ? UO * CU / 100 : null;
     var OA = avg(weekKpis.map(function (k) { return k.OA; }));
+    // OEE = Availability x Performance x Quality(=100%) -> OA x CU / 100
+    var OEE = (OA !== null && CU !== null) ? OA * CU / 100 : null;
     var MA = avg(weekKpis.map(function (k) { return k.MA; }));
-    return { week: weekNo, PT: PT, OT: OT, production: Production, rate: Rate, UO: UO, CU: CU, OEE: OEE, OA: OA, MA: MA, planRate: planRate, days: weekKpis.length };
+    var UA = avg(weekKpis.map(function (k) { return k.UA; }));
+    return { week: weekNo, PT: PT, OT: OT, production: Production, rate: Rate, UO: UO, UA: UA, CU: CU, OEE: OEE, OA: OA, MA: MA, planRate: planRate, days: weekKpis.length };
   }
 
   function summarizeMonth(monthKpis, monthNo, planMonthly, assumptions) {
@@ -281,23 +295,35 @@
 
     var UOw = sOT !== 0 ? sPT / sOT * 100 : null;
     var OAw = sST !== 0 ? sAT / sST * 100 : null;
+    var UAw = sAT !== 0 ? sOT / sAT * 100 : null;
     var MAw = (sOT + sMT) !== 0 ? sOT / (sOT + sMT) * 100 : null;
     var REw = (sAT + sUD) !== 0 ? sAT / (sAT + sUD) * 100 : null;
     var CUw = (Rate !== null && plan.qplanRate) ? Rate / plan.qplanRate * 100 : null;
-    var OEEw = (UOw !== null && CUw !== null) ? UOw * CUw / 100 : null;
+    // OEE = Availability x Performance x Quality(=100%) -> OA x CU / 100
+    var OEEw = (OAw !== null && CUw !== null) ? OAw * CUw / 100 : null;
 
     var UOavg = avg(monthKpis.map(function (k) { return k.UO; }));
+    var UAavg = avg(monthKpis.map(function (k) { return k.UA; }));
     var CUavg = (plan.qplanRate) ? avg(monthKpis.map(function (k) { return k.Qvs; })) / plan.qplanRate * 100 : null;
-    var OEEavg = (UOavg !== null && CUavg !== null) ? UOavg * CUavg / 100 : null;
     var OAavg = avg(monthKpis.map(function (k) { return k.OA; }));
+    var OEEavg = (OAavg !== null && CUavg !== null) ? OAavg * CUavg / 100 : null;
     var MAavg = avg(monthKpis.map(function (k) { return k.MA; }));
+
+    // True MTBF/MTTR aggregated over the period: sum the actual breakdown
+    // counts (falling back to the legacy per-day proxy for rows that don't
+    // have the count filled in) rather than averaging daily ratios, which
+    // avoids single zero-breakdown days distorting the period figure.
+    var sumBreakdownCount = monthKpis.reduce(function (a, k) { return a + k.BF; }, 0);
+    var MTBFw = (sOT !== 0 && sumBreakdownCount !== 0) ? sOT / sumBreakdownCount : null;
+    var MTTRw = (sUD !== 0 && sumBreakdownCount !== 0) ? sUD / sumBreakdownCount : null;
 
     return {
       month: monthNo, name: plan.name, days: plan.days,
       sumPT: sPT, sumOT: sOT, sumST: sST, sumAT: sAT, sumMT: sMT, sumUD: sUD, sumIT: sIT, sumDT: sDT,
       production: Production, S1: S1, S2: S2, S3: S3, energy: Energy, rate: Rate,
-      w: { UO: UOw, OA: OAw, MA: MAw, RE: REw, CU: CUw, OEE: OEEw },
-      avgMethod: { UO: UOavg, CU: CUavg, OEE: OEEavg, OA: OAavg, MA: MAavg },
+      MTBF: MTBFw, MTTR: MTTRw, sumBreakdownCount: sumBreakdownCount,
+      w: { UO: UOw, UA: UAw, OA: OAw, MA: MAw, RE: REw, CU: CUw, OEE: OEEw },
+      avgMethod: { UO: UOavg, UA: UAavg, CU: CUavg, OEE: OEEavg, OA: OAavg, MA: MAavg },
       planProd: plan.wasteProdPlan, planRate: plan.qplanRate,
       varProd: Production ? Production - plan.wasteProdPlan : null,
       varOEE: OEEw !== null ? OEEw - assumptions.OEE_tgt : null
@@ -363,10 +389,17 @@
       var over24h = (HT + MT + PAITDT) > 24;
       var noProduction = (d.prodConD + d.prodConF + d.prodOther) === 0;
       var duplicate = seen[key] > 1;
+      var unplannedBD = d.udOperation + d.udMechanical + d.udElectrical + d.udPLC + d.udBelt;
+      // soft warning only (does not affect PASS/CHECK) — there was unplanned
+      // downtime that day but no breakdown-event count was entered, so
+      // MTBF/MTTR for that day fall back to the legacy proxy instead of a
+      // real figure.
+      var missingBreakdownCount = unplannedBD > 0 && !(d.breakdownCount > 0);
       var pass = !missingSeason && !negative && !over24h && !duplicate;
       return {
         date: d.date, missingSeason: missingSeason, negative: negative, over24h: over24h,
-        noProduction: noProduction, duplicate: duplicate, status: pass ? "PASS" : "CHECK"
+        noProduction: noProduction, duplicate: duplicate, missingBreakdownCount: missingBreakdownCount,
+        status: pass ? "PASS" : "CHECK"
       };
     });
   }
@@ -384,6 +417,7 @@
     var rate = sPT !== 0 ? production / sPT : null;
     var UOw = sOT !== 0 ? sPT / sOT * 100 : null;
     var OAw = sST !== 0 ? sAT / sST * 100 : null;
+    var UAw = sAT !== 0 ? sOT / sAT * 100 : null;
     var MAw = (sOT + sMT) !== 0 ? sOT / (sOT + sMT) * 100 : null;
     var REw = (sAT + sUD) !== 0 ? sAT / (sAT + sUD) * 100 : null;
 
@@ -396,44 +430,58 @@
     }
     var blendedPlanRate = totalDays ? weightedRateSum / totalDays : 0;
     var CUw = (rate !== null && blendedPlanRate) ? rate / blendedPlanRate * 100 : null;
-    var OEEw = (UOw !== null && CUw !== null) ? UOw * CUw / 100 : null;
+    // OEE = Availability x Performance x Quality(=100%) -> OA x CU / 100
+    var OEEw = (OAw !== null && CUw !== null) ? OAw * CUw / 100 : null;
 
     var UOavg = avg(kpisSubset.map(function (k) { return k.UO; }));
+    var UAavg = avg(kpisSubset.map(function (k) { return k.UA; }));
     var CUavg = blendedPlanRate ? avg(kpisSubset.map(function (k) { return k.Qvs; })) / blendedPlanRate * 100 : null;
-    var OEEavg = (UOavg !== null && CUavg !== null) ? UOavg * CUavg / 100 : null;
     var OAavg = avg(kpisSubset.map(function (k) { return k.OA; }));
+    var OEEavg = (OAavg !== null && CUavg !== null) ? OAavg * CUavg / 100 : null;
     var MAavg = avg(kpisSubset.map(function (k) { return k.MA; }));
     var REavg = avg(kpisSubset.map(function (k) { return k.RE; }));
+
+    var sumBreakdownCount = kpisSubset.reduce(function (a, k) { return a + k.BF; }, 0);
+    var MTBFw = (sOT !== 0 && sumBreakdownCount !== 0) ? sOT / sumBreakdownCount : null;
+    var MTTRw = (sUD !== 0 && sumBreakdownCount !== 0) ? sUD / sumBreakdownCount : null;
 
     return {
       days: n, sumPT: sPT, sumOT: sOT, sumST: sST, sumAT: sAT, sumMT: sMT, sumUD: sUD, sumIT: sIT, sumDT: sDT,
       production: production, energy: energy, rate: rate, planRate: blendedPlanRate,
-      w: { UO: UOw, OA: OAw, MA: MAw, RE: REw, CU: CUw, OEE: OEEw },
-      avgMethod: { UO: UOavg, CU: CUavg, OEE: OEEavg, OA: OAavg, MA: MAavg, RE: REavg },
+      MTBF: MTBFw, MTTR: MTTRw,
+      w: { UO: UOw, UA: UAw, OA: OAw, MA: MAw, RE: REw, CU: CUw, OEE: OEEw },
+      avgMethod: { UO: UOavg, UA: UAavg, CU: CUavg, OEE: OEEavg, OA: OAavg, MA: MAavg, RE: REavg },
       varOEE: OEEw !== null ? OEEw - assumptions.OEE_tgt : null
     };
   }
 
   function computeYTD(monthlySummaries, assumptions) {
     var sPT = 0, sOT = 0, sST = 0, sAT = 0, sMT = 0, sUD = 0, production = 0, planProdSum = 0, daysSum = 0, planRates = [];
+    var sumBreakdownCount = 0;
     monthlySummaries.forEach(function (ms) {
       sPT += ms.sumPT; sOT += ms.sumOT; sST += ms.sumST; sAT += ms.sumAT; sMT += ms.sumMT; sUD += ms.sumUD;
       production += ms.production; planProdSum += ms.planProd; daysSum += ms.days;
       planRates.push(ms.planRate);
+      sumBreakdownCount += ms.sumBreakdownCount || 0;
     });
     var rate = sPT !== 0 ? production / sPT : 0;
     var UO = sOT !== 0 ? sPT / sOT * 100 : 0;
     var OA = sST !== 0 ? sAT / sST * 100 : 0;
+    var UA = sAT !== 0 ? sOT / sAT * 100 : 0;
     var MA = (sOT + sMT) !== 0 ? sOT / (sOT + sMT) * 100 : 0;
     var RE = (sAT + sUD) !== 0 ? sAT / (sAT + sUD) * 100 : 0;
     var avgPlanRate = avg(planRates) || 0;
     var CU = avgPlanRate ? rate / avgPlanRate * 100 : 0;
-    var OEE = UO * CU / 100;
+    // OEE = Availability x Performance x Quality(=100%) -> OA x CU / 100
+    var OEE = OA * CU / 100;
     var achievementPct = planProdSum ? production / planProdSum * 100 : 0;
+    var MTBF = sumBreakdownCount !== 0 ? sOT / sumBreakdownCount : null;
+    var MTTR = sumBreakdownCount !== 0 ? sUD / sumBreakdownCount : null;
     return {
       production: production, planProd: planProdSum, achievementPct: achievementPct,
       rate: rate, sumPT: sPT, sumOT: sOT, sumST: sST, sumAT: sAT, sumMT: sMT, sumUD: sUD,
-      UO: UO, OA: OA, MA: MA, RE: RE, CU: CU, OEE: OEE, varOEE: OEE - assumptions.OEE_tgt,
+      UO: UO, UA: UA, OA: OA, MA: MA, RE: RE, CU: CU, OEE: OEE, MTBF: MTBF, MTTR: MTTR,
+      varOEE: OEE - assumptions.OEE_tgt,
       days: daysSum
     };
   }

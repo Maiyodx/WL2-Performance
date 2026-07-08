@@ -188,8 +188,9 @@
     var ytd = WL2.computeYTD(monthly, state.assumptions);
     return {
       days: ytd.days, sumPT: ytd.sumPT, production: ytd.production, rate: ytd.rate,
-      w: { UO: ytd.UO, OA: ytd.OA, MA: ytd.MA, RE: ytd.RE, CU: ytd.CU, OEE: ytd.OEE },
-      avgMethod: { UO: ytd.UO, CU: ytd.CU, OEE: ytd.OEE, OA: ytd.OA, MA: ytd.MA }
+      MTBF: ytd.MTBF, MTTR: ytd.MTTR,
+      w: { UO: ytd.UO, UA: ytd.UA, OA: ytd.OA, MA: ytd.MA, RE: ytd.RE, CU: ytd.CU, OEE: ytd.OEE },
+      avgMethod: { UO: ytd.UO, UA: ytd.UA, CU: ytd.CU, OEE: ytd.OEE, OA: ytd.OA, MA: ytd.MA }
     };
   }
 
@@ -202,13 +203,19 @@
     var wrap = $("#kpiCards");
     wrap.innerHTML = "";
 
+    var usingTrueBD = subset.some(function (k) { return k.usingTrueBreakdownCount; });
+    var mtbfSub = usingTrueBD ? "OT / จำนวนครั้ง Breakdown จริง" : "ยังไม่มีข้อมูลจำนวนครั้ง Breakdown (ใช้ค่าประมาณ)";
+
     var tiles = [
-      { label: "OEE (ถ่วงน้ำหนัก)", value: ps.w.OEE, isPct: true, sub: "เป้าหมาย " + target + "%", status: statusForOEE(ps.w.OEE, target) },
-      { label: "Availability (OA)", value: ps.w.OA, isPct: true, sub: "AT / ST", status: statusForThreshold(ps.w.OA, "OA") },
-      { label: "Utilization (UO)", value: ps.w.UO, isPct: true, sub: "PT / OT", status: statusForThreshold(ps.w.UO, "UO") },
-      { label: "Capacity Utilization", value: ps.w.CU, isPct: true, sub: "Actual Rate / Plan Rate", status: statusForThreshold(ps.w.CU, "CU") },
-      { label: "Mechanical Avail.", value: ps.w.MA, isPct: true, sub: "OT / (OT+MT)", status: statusForThreshold(ps.w.MA, "MA") },
-      { label: "Reliability", value: ps.w.RE, isPct: true, sub: "AT / (AT+UD)", status: statusForThreshold(ps.w.RE, "RE") },
+      { label: "OEE (A×P, Quality=100%)", value: ps.w.OEE, isPct: true, sub: "เป้าหมาย " + target + "% • OA × Performance", status: statusForOEE(ps.w.OEE, target) },
+      { label: "Operating Availability (OA)", value: ps.w.OA, isPct: true, sub: "AT / ST", status: statusForThreshold(ps.w.OA, "OA") },
+      { label: "Mechanical Avail. (MA)", value: ps.w.MA, isPct: true, sub: "OT / (OT+MT)", status: statusForThreshold(ps.w.MA, "MA") },
+      { label: "Utilization Avail. (UA)", value: ps.w.UA, isPct: true, sub: "OT / (OT+IT)", status: statusForThreshold(ps.w.UA, "UA") },
+      { label: "Working Utilization (UO)", value: ps.w.UO, isPct: true, sub: "WT / (WT+DT)", status: statusForThreshold(ps.w.UO, "UO") },
+      { label: "Reliability (RE)", value: ps.w.RE, isPct: true, sub: "AT / (AT+Unplanned MT)", status: statusForThreshold(ps.w.RE, "RE") },
+      { label: "Performance (CU)", value: ps.w.CU, isPct: true, sub: "Actual Output / Ideal Output", status: statusForThreshold(ps.w.CU, "CU") },
+      { label: "MTBF", value: ps.MTBF, unit: "hr", isNum: true, sub: mtbfSub, status: "neutral" },
+      { label: "MTTR", value: ps.MTTR, unit: "hr", isNum: true, sub: "Unplanned MT / จำนวนครั้ง Breakdown", status: "neutral" },
       { label: "Production", value: ps.production, unit: "BCM", isNum: true, sub: "Rate " + fmt(ps.rate) + " BCM/hr", status: "neutral" },
       { label: "Productive Time", value: ps.sumPT, unit: "hr", isNum: true, sub: subset.length + " วันที่มีข้อมูลในช่วงนี้", status: "neutral" }
     ];
@@ -463,6 +470,7 @@
     var over24 = subset.filter(function (d) { return d.over24h; }).length;
     var noProd = subset.filter(function (d) { return d.noProduction; }).length;
     var dup = subset.filter(function (d) { return d.duplicate; }).length;
+    var missingBD = subset.filter(function (d) { return d.missingBreakdownCount; }).length;
     var check = subset.filter(function (d) { return d.status !== "PASS"; }).length;
 
     var chips = [
@@ -470,6 +478,7 @@
       { label: "PASS", value: subset.length - check, cls: "good" },
       { label: "ต้องแก้ (CHECK)", value: check, cls: check ? "critical" : "good" },
       { label: "ไม่มี Production", value: noProd, cls: noProd ? "warning" : "good" },
+      { label: "ไม่มีจำนวนครั้ง Breakdown", value: missingBD, cls: missingBD ? "warning" : "good" },
       { label: "ค่าติดลบ", value: negative, cls: negative ? "critical" : "good" },
       { label: "เกิน 24 ชม./วัน", value: over24, cls: over24 ? "critical" : "good" },
       { label: "วันซ้ำ", value: dup, cls: dup ? "critical" : "good" }
@@ -479,10 +488,10 @@
       return '<span class="dq-chip" style="border-color:' + color + '55;color:' + (c.cls ? color : "var(--text-primary)") + '">' + c.label + ": " + c.value + "</span>";
     }).join("");
 
-    var issues = subset.filter(function (d) { return d.status !== "PASS" || d.noProduction; });
+    var issues = subset.filter(function (d) { return d.status !== "PASS" || d.noProduction || d.missingBreakdownCount; });
     var tbody = $("#dqTableBody");
     if (!issues.length) {
-      tbody.innerHTML = '<tr><td colspan="7" style="text-align:center;color:var(--text-muted);padding:20px">ไม่มีปัญหาข้อมูลในช่วงที่เลือก — ข้อมูลผ่านการตรวจสอบทั้งหมด</td></tr>';
+      tbody.innerHTML = '<tr><td colspan="8" style="text-align:center;color:var(--text-muted);padding:20px">ไม่มีปัญหาข้อมูลในช่วงที่เลือก — ข้อมูลผ่านการตรวจสอบทั้งหมด</td></tr>';
     } else {
       tbody.innerHTML = issues.map(function (d) {
         return "<tr><td>" + d.date.toLocaleDateString("th-TH") + "</td>" +
@@ -490,6 +499,7 @@
           "<td>" + (d.negative ? "⚠" : "-") + "</td>" +
           "<td>" + (d.over24h ? "⚠" : "-") + "</td>" +
           "<td>" + (d.noProduction ? "⚠" : "-") + "</td>" +
+          "<td>" + (d.missingBreakdownCount ? "⚠" : "-") + "</td>" +
           "<td>" + (d.duplicate ? "⚠" : "-") + "</td>" +
           '<td><span class="badge ' + (d.status === "PASS" ? "good" : "critical") + '">' + d.status + "</span></td></tr>";
       }).join("");
